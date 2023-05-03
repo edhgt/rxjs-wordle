@@ -1,8 +1,7 @@
-import "./style.css";
-import { Subject, fromEvent } from "rxjs";
+import { merge, fromEvent, Subject } from "rxjs";
 import { map, filter, takeUntil } from "rxjs/operators";
-import JSConfetti from "js-confetti";
 import WORDS_LIST from "./wordsList.json";
+import JSConfetti from "js-confetti";
 
 const restartButton = document.getElementById("restart-button");
 const letterRows = document.getElementsByClassName("letter-row");
@@ -13,8 +12,7 @@ let letterRowIndex = 0;
 let userAnswer = [];
 const getRandomWord = () =>
   WORDS_LIST[Math.floor(Math.random() * WORDS_LIST.length)];
-let rightWord = getRandomWord();
-console.log(`Right word: ${rightWord}`);
+let rightWord;
 
 const userWinOrLoose$ = new Subject();
 
@@ -22,38 +20,41 @@ const insertLetter$ = onKeyDown$.pipe(
   map((event) => event.key.toUpperCase()),
   filter(
     (pressedKey) =>
-      pressedKey.length === 1 && pressedKey.match(/[A-Z]/i) && letterIndex < 5
+      pressedKey.length === 1 && pressedKey.match(/[a-z]/i) && letterIndex < 5
   )
 );
 
 const insertLetter = {
-  next: (event) => {
-    const pressedKey = event.key.toUpperCase();
-    if (
-      pressedKey.length === 1 &&
-      pressedKey.match(/[A-Z]/i) &&
-      letterIndex < 5
-    ) {
-      let letterBox =
-        Array.from(letterRows)[letterRowIndex].children[letterIndex];
-      letterBox.textContent = pressedKey;
-      letterBox.classList.add("filled-letter");
-      letterIndex++;
-      userAnswer.push(pressedKey);
-    }
+  next: (letter) => {
+    let letterBox =
+      Array.from(letterRows)[letterRowIndex].children[letterIndex];
+    letterBox.textContent = letter;
+    letterBox.classList.add("filled-letter");
+    letterIndex++;
+    userAnswer.push(letter);
   },
 };
 
 const checkWord$ = onKeyDown$.pipe(
   map((event) => event.key),
-  filter((key) => key === "Enter" && letterIndex === 5 && letterRowIndex <= 5)
+  filter((key) => key === "Enter" && letterRowIndex < 6)
 );
 
 const checkWord = {
   next: () => {
-    if (userAnswer.length !== 5) {
-      messageText.textContent = "¡Te faltan algunas letras!";
+    if (userAnswer.length != 5) {
+      messageText.textContent =
+        userAnswer.length === 4
+          ? "Te falta 1 letra"
+          : `Te faltan ${5 - userAnswer.length} letras`;
       return;
+    }
+
+    if (!WORDS_LIST.includes(userAnswer.join(""))) {
+      messageText.textContent = `¡La palabra ${userAnswer
+        .join("")
+        .toUpperCase()} no está en la lista!`;
+      //return;
     }
 
     // También podemos cambiar el ciclo for/forEach/while en lugar de `userAnswer.map()`
@@ -76,15 +77,10 @@ const checkWord = {
       letterBox.classList.add(letterColor);
     });
 
-    // if (userAnswer.length === 5) {
-    //   letterIndex = 0;
-    //   userAnswer = [];
-    //   letterRowIndex++;
-    // }
-
     if (userAnswer.join("") === rightWord) {
       messageText.textContent = `😊 ¡Sí! La palabra ${rightWord.toUpperCase()} es la correcta`;
       userWinOrLoose$.next();
+      new JSConfetti().addConfetti();
       restartButton.disabled = false;
     } else {
       letterIndex = 0;
@@ -105,38 +101,45 @@ const removeLetter$ = onKeyDown$.pipe(
   filter((key) => key === "Backspace" && letterIndex !== 0)
 );
 
-// 📝 Observador `removeLetter` (o `deleteLetter`) que nos ayuda a borrar la última letra
 const removeLetter = {
-  next: (event) => {
-    const pressedKey = event.key;
-    // Verificamos si es la tecla Backspace y que no estamos en la primera posición [0]
-    if (pressedKey === "Backspace" && letterIndex !== 0) {
-      let letterBox =
-        letterRows[letterRowIndex].children[userAnswer.length - 1];
-      letterBox.textContent = "";
-      letterBox.classList = "letter";
-      letterIndex--;
-      userAnswer.pop();
-    }
+  next: () => {
+    let letterBox = letterRows[letterRowIndex].children[userAnswer.length - 1];
+    letterBox.textContent = "";
+    letterBox.classList = "letter";
+    letterIndex--;
+    userAnswer.pop();
   },
 };
 
-onKeyDown$.subscribe(insertLetter);
-onKeyDown$.subscribe(checkWord);
-onKeyDown$.subscribe(removeLetter);
+const onRestartClick$ = fromEvent(restartButton, "click");
+const onWindowLoad$ = fromEvent(window, "load");
+const restartGame$ = merge(onWindowLoad$, onRestartClick$);
 
-userWinOrLoose$.subscribe(() => {
-  let letterRowsWinned = letterRows[letterRowIndex];
-  for (let i = 0; i < 5; i++) {
-    letterRowsWinned.children[i].classList.add("letter-green");
-  }
-  const jsConfetti = new JSConfetti();
-  jsConfetti.addConfetti();
+restartGame$.subscribe(() => {
+  Array.from(letterRows).map((row) =>
+    Array.from(row.children).map((letterBox) => {
+      letterBox.textContent = "";
+      letterBox.classList = "letter";
+    })
+  );
+
+  letterRowIndex = 0;
+  letterIndex = 0;
+  userAnswer = [];
+  messageText.textContent = "";
+  rightWord = getRandomWord();
+
+  restartButton.disabled = true;
+
+  console.log(`Right word: ${rightWord}`);
+
+  let insertLetterSubscription = insertLetter$
+    .pipe(takeUntil(userWinOrLoose$))
+    .subscribe(insertLetter);
+  let checkWordSubscription = checkWord$
+    .pipe(takeUntil(userWinOrLoose$))
+    .subscribe(checkWord);
+  let removeLetterSubscription = removeLetter$
+    .pipe(takeUntil(userWinOrLoose$))
+    .subscribe(removeLetter);
 });
-
-// Ahora suscribimos los observables, pero antes los encadenamos con takeUntil(userWinOrLoose$):
-// ✅ De esa forma, cuando se ejecuta userWinOrLoose$.next() (ver línea 85, línea 94), se completarán
-// los observables devueltos por insertLetter$, checkWord$, removeLetter$.
-insertLetter$.pipe(takeUntil(userWinOrLoose$)).subscribe(insertLetter);
-checkWord$.pipe(takeUntil(userWinOrLoose$)).subscribe(checkWord);
-removeLetter$.pipe(takeUntil(userWinOrLoose$)).subscribe(removeLetter);
