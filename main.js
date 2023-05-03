@@ -1,8 +1,10 @@
 import "./style.css";
 import { Subject, fromEvent } from "rxjs";
+import { map, filter, takeUntil } from "rxjs/operators";
 import JSConfetti from "js-confetti";
 import WORDS_LIST from "./wordsList.json";
 
+const restartButton = document.getElementById("restart-button");
 const letterRows = document.getElementsByClassName("letter-row");
 const messageText = document.getElementById("message-text");
 const onKeyDown$ = fromEvent(document, "keydown");
@@ -15,6 +17,14 @@ let rightWord = getRandomWord();
 console.log(`Right word: ${rightWord}`);
 
 const userWinOrLoose$ = new Subject();
+
+const insertLetter$ = onKeyDown$.pipe(
+  map((event) => event.key.toUpperCase()),
+  filter(
+    (pressedKey) =>
+      pressedKey.length === 1 && pressedKey.match(/[A-Z]/i) && letterIndex < 5
+  )
+);
 
 const insertLetter = {
   next: (event) => {
@@ -34,51 +44,66 @@ const insertLetter = {
   },
 };
 
+const checkWord$ = onKeyDown$.pipe(
+  map((event) => event.key),
+  filter((key) => key === "Enter" && letterIndex === 5 && letterRowIndex <= 5)
+);
+
 const checkWord = {
-  next: (event) => {
-    if (event.key === "Enter") {
-      if (userAnswer.length !== 5) {
-        messageText.textContent = "¡Te faltan algunas letras!";
-        return; // <- Este return nos permite parar la ejecución del observable
-      }
+  next: () => {
+    if (userAnswer.length !== 5) {
+      messageText.textContent = "¡Te faltan algunas letras!";
+      return;
+    }
 
-      // También podemos cambiar el ciclo for/forEach/while en lugar de `userAnswer.map()`
-      // 😊 Iteramos sobre las letras en índices `[0, 1, 2, 3, 4]`:
-      userAnswer.map((_, i) => {
-        let letterColor = "";
-        let letterBox = letterRows[letterRowIndex].children[i];
+    // También podemos cambiar el ciclo for/forEach/while en lugar de `userAnswer.map()`
+    // Iteramos sobre las letras en índices `[0, 1, 2, 3, 4]`:
+    userAnswer.map((_, i) => {
+      let letterColor = "";
+      let letterBox = letterRows[letterRowIndex].children[i];
 
-        // 🔍 Verificamos si la posición de la letra del usuario coincide con la posición correcta
-        // Si la letra no se encuentra, indexOf() devolverá -1 (ver línea 58)
-        // https://developer.mozilla.org/es/docs/Web/JavaScript/Reference/Global_Objects/Array/indexOf
-        let letterPosition = rightWord.indexOf(userAnswer[i]);
+      let letterPosition = rightWord.indexOf(userAnswer[i]);
 
-        if (rightWord[i] === userAnswer[i]) {
-          letterColor = "letter-green"; // Pintar de verde 🟩 si coincide letra[posición]
+      if (rightWord[i] === userAnswer[i]) {
+        letterColor = "letter-green";
+      } else {
+        if (letterPosition === -1) {
+          letterColor = "letter-grey";
         } else {
-          if (letterPosition === -1) {
-            letterColor = "letter-grey"; // Pintar de gris ⬜️ si no coincide letra o posición
-          } else {
-            letterColor = "letter-yellow"; // Pintar de amarillo 🟨 si coincide letra, pero no posición
-          }
+          letterColor = "letter-yellow";
         }
-        letterBox.classList.add(letterColor);
-      });
-
-      // 💚 Ganas el juego si la respuesta del usuario coincide con la palabra correcta
-      if (userAnswer.join("") === rightWord) {
-        userWinOrLoose$.next();
       }
+      letterBox.classList.add(letterColor);
+    });
 
-      // 🔄 Cuando se haya completado la palabra, permite escribir en la siguiente fila:
-      if (userAnswer.length === 5) {
-        letterIndex = 0;
-        userAnswer = [];
-        letterRowIndex++;
+    // if (userAnswer.length === 5) {
+    //   letterIndex = 0;
+    //   userAnswer = [];
+    //   letterRowIndex++;
+    // }
+
+    if (userAnswer.join("") === rightWord) {
+      messageText.textContent = `😊 ¡Sí! La palabra ${rightWord.toUpperCase()} es la correcta`;
+      userWinOrLoose$.next();
+      restartButton.disabled = false;
+    } else {
+      letterIndex = 0;
+      letterRowIndex++;
+      userAnswer = [];
+
+      if (letterRowIndex === 6) {
+        messageText.textContent = `😔 Perdiste. La palabra correcta era: "${rightWord.toUpperCase()}"`;
+        userWinOrLoose$.next();
+        restartButton.disabled = false;
       }
     }
   },
 };
+
+const removeLetter$ = onKeyDown$.pipe(
+  map((event) => event.key),
+  filter((key) => key === "Backspace" && letterIndex !== 0)
+);
 
 // 📝 Observador `removeLetter` (o `deleteLetter`) que nos ayuda a borrar la última letra
 const removeLetter = {
@@ -108,3 +133,10 @@ userWinOrLoose$.subscribe(() => {
   const jsConfetti = new JSConfetti();
   jsConfetti.addConfetti();
 });
+
+// Ahora suscribimos los observables, pero antes los encadenamos con takeUntil(userWinOrLoose$):
+// ✅ De esa forma, cuando se ejecuta userWinOrLoose$.next() (ver línea 85, línea 94), se completarán
+// los observables devueltos por insertLetter$, checkWord$, removeLetter$.
+insertLetter$.pipe(takeUntil(userWinOrLoose$)).subscribe(insertLetter);
+checkWord$.pipe(takeUntil(userWinOrLoose$)).subscribe(checkWord);
+removeLetter$.pipe(takeUntil(userWinOrLoose$)).subscribe(removeLetter);
